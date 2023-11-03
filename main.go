@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -21,53 +22,34 @@ func main() {
 		c.JSON(200, gin.H{"message": "ok"})
 	})
 
-	chanError := make(chan error)
-
-	go gracefullyShutdown(r, "8181", chanError)
-
-	if err := <-chanError; err != nil {
-		fmt.Println(err.Error())
-	}
-
-}
-
-func gracefullyShutdown(handler http.Handler, addr string, chanError chan error) {
-
+	addr := "8081"
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%s", addr),
-		Handler: handler,
+		Handler: r,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
-
-	go func() {
-		<-ctx.Done()
-		fmt.Println("Received a shutdown signal, quiting...")
-
-		shutdownTimeout := 10 * time.Second
-		ctxTimeout, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-
-		defer func() {
-			stop()
-			cancel()
-			close(chanError)
-		}()
-
-		err := server.Shutdown(ctxTimeout)
-		if err != nil {
-			chanError <- fmt.Errorf("error on shutdown application: %v", err)
-			return
-		}
-		fmt.Println("shutdown completed")
-
-	}()
 
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			chanError <- fmt.Errorf("error on start application: %v", err)
-			return
+			fmt.Println("error received on ListenAnd Serve", err.Error())
 		}
 	}()
 
+	sigs := make(chan os.Signal, 1)
+	done := make(chan bool)
+
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		done <- true
+	}()
+
+	<-done
+
+	fmt.Println("Received a shutdown signal, quiting...")
+
+	ctxTimeout, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	_ = server.Shutdown(ctxTimeout)
+
+	fmt.Println("shutdown completed")
 }
